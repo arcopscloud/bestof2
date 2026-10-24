@@ -1,0 +1,47 @@
+{
+  "name": "bestof2",
+  "version": "0.1.2",
+  "description": "Dual-Cloud Deployment Engine: Frontend on Cloudflare Pages + Backend on AWS Lambda Web Functions",
+  "main": "index.js",
+  "bin": {
+    "bestof2": "bin/bestof2.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/test-all-frameworks.js"
+  },
+  "keywords": [
+    "nextjs",
+    "cloudflare-pages",
+    "aws-lambda",
+    "serverless",
+    "deployment",
+    "lambda-web-functions",
+    "remix",
+    "nuxt",
+    "hono",
+    "express"
+  ],
+  "author": "ArcOps",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arcopscloud/bestof2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arcopscloud/bestof2/issues"
+  },
+  "homepage": "https://github.com/arcopscloud/bestof2#readme",
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.1156.0",
+    "@aws-sdk/client-lambda-web": "^3.1156.0",
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/client-sts": "^3.1156.0",
+    "dotenv": "^18.0.9"
+  }
+}

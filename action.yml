@@ -1,0 +1,102 @@
+name: 'BestOf2 Dual-Cloud Deploy'
+description: 'Zero-config deployer: Frontend to Cloudflare Pages CDN & Backend to AWS Lambda or GHCR Container'
+author: 'ArcOps Cloud'
+branding:
+  icon: 'cloud'
+  color: 'orange'
+
+inputs:
+  cloudflare-api-token:
+    description: 'Cloudflare API Token'
+    required: false
+    default: ''
+  bestof2-secret:
+    description: 'Shared AES token for Cloudflare <-> Backend handshake'
+    required: false
+    default: ''
+  aws-access-key-id:
+    description: 'AWS Access Key ID (Leave empty for GHCR Docker container fallback)'
+    required: false
+    default: ''
+  aws-secret-access-key:
+    description: 'AWS Secret Access Key'
+    required: false
+    default: ''
+  aws-deployment-bucket:
+    description: 'AWS S3 Bucket for Lambda deployment artifacts'
+    required: false
+    default: ''
+  aws-default-region:
+    description: 'AWS Region for Lambda deployment'
+    required: false
+    default: 'us-east-1'
+  github-token:
+    description: 'GitHub token for GHCR container push'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🟢 Setup Node.js Runtime
+      uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    # 1. Main BestOf2 Deploy (Handles detection and Cloudflare Pages automatically)
+    - name: 🚀 Deploy via BestOf2 Engine
+      shell: bash
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ inputs.cloudflare-api-token != '' && inputs.cloudflare-api-token || env.CLOUDFLARE_API_TOKEN }}
+        BESTOF2_SECRET: ${{ inputs.bestof2-secret != '' && inputs.bestof2-secret || env.BESTOF2_SECRET }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.aws-access-key-id != '' && inputs.aws-access-key-id || env.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.aws-secret-access-key != '' && inputs.aws-secret-access-key || env.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEPLOYMENT_BUCKET: ${{ inputs.aws-deployment-bucket != '' && inputs.aws-deployment-bucket || env.AWS_DEPLOYMENT_BUCKET }}
+        AWS_DEFAULT_REGION: ${{ inputs.aws-default-region != '' && inputs.aws-default-region || env.AWS_DEFAULT_REGION }}
+      run: npx -y bestof2 deploy
+
+    # 2. Self-Host Fallback: Agar AWS keys nahi hain, toh container bana kar GHCR par push kardo
+    - name: 🐳 Push Backend to GHCR (Self-Host Fallback)
+      if: ${{ (inputs.aws-access-key-id == '' && env.AWS_ACCESS_KEY_ID == '') }}
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GH_TOKEN: ${{ inputs.github-token != '' && inputs.github-token || env.GITHUB_TOKEN }}
+        TOKEN: ${{ inputs.bestof2-secret != '' && inputs.bestof2-secret || env.BESTOF2_SECRET }}
+      run: |
+        # A. Agar pure frontend hai toh container skip
+        HAS_BACKEND=$(node -e "const { detectFramework } = require('bestof2'); console.log(detectFramework(process.cwd()).category !== 'frontend-only')")
+        if [ "$HAS_BACKEND" != "true" ]; then
+          echo "✔ Pure frontend detected: skipping container build."
+          exit 0
+        fi
+
+        # B. GHCR Login & Lowercase Image Name
+        echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+        IMAGE="ghcr.io/${REPO}-backend:latest"
+
+        # C. Build node:24-alpine directly from stdin
+        docker build -t "$IMAGE" -f - . << 'EOF'
+        FROM node:24-alpine
+        WORKDIR /app
+        COPY . .
+        ENV PORT=8080 NODE_ENV=production
+        EXPOSE 8080
+        CMD ["npm", "start"]
+        EOF
+
+        docker push "$IMAGE"
+
+        # D. VPS Command in Step Summary
+        MASKED="${TOKEN:0:6}...${TOKEN: -6}"
+        echo "### 🚀 Self-Host Backend on Any VPS ($0 AWS Cost)" >> $GITHUB_STEP_SUMMARY
+        echo "Frontend is live on **Cloudflare Pages CDN**. Run your shielded backend with:" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "docker run -d -p 8080:8080 -e BESTOF2_SECRET=\"${MASKED}\" --restart unless-stopped ${IMAGE}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "👉 **Next Step:** In your Cloudflare Pages Dashboard, go to **Settings ➡️ Environment variables** and add:" >> $GITHUB_STEP_SUMMARY
+        echo "- \`BACKEND_URL\`: \`https://your-vps-domain-or-ip:8080\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🛡️ *Direct visits to your VPS IP without Cloudflare handshake are strictly blocked with 403 Forbidden.*" >> $GITHUB_STEP_SUMMARY
