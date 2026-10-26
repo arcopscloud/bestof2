@@ -408,7 +408,10 @@ async function deployToLambda({
   bucketName = process.env.AWS_DEPLOYMENT_BUCKET || process.env.BESTOF2_BUCKET || 'bestof2',
   roleArn = process.env.AWS_ROLE_ARN,
   runtime = process.env.AWS_LAMBDA_RUNTIME || 'nodejs24.x',
-  region = process.env.AWS_DEFAULT_REGION || process.env.AWS_REGION || 'us-east-1'
+  region = process.env.AWS_DEFAULT_REGION || process.env.AWS_REGION || 'us-east-1',
+  timeoutSeconds = 60,
+  maxConcurrency = 100,
+  envVars = {}
 } = {}) {
   // Auto-zip if serverDir is passed and no zipPath specified
   if (!zipPath && serverDir && fs.existsSync(serverDir)) {
@@ -504,8 +507,16 @@ async function deployToLambda({
 
   let endpointDomain = null;
 
+  const resolvedEnv = {
+    NODE_ENV: 'production',
+    ...(envVars || {})
+  };
+  if (secretToken) {
+    resolvedEnv.BESTOF2_SECRET = secretToken;
+  }
+
   if (!webFunctionExists) {
-    console.log(`🌐 Creating new Lambda Web Function '${functionName}' (${runtime}, 128 max concurrency)...`);
+    console.log(`🌐 Creating new Lambda Web Function '${functionName}' (${runtime}, ${maxConcurrency} max concurrency, ${timeoutSeconds}s timeout)...`);
     const createRes = await lambdaWeb.send(new CreateWebFunctionCommand({
       functionName: functionName,
       revisionConfig: {
@@ -519,14 +530,9 @@ async function deployToLambda({
         },
         serviceConfig: {
           executionRoleArn: resolvedRoleArn,
-          maxConcurrencyPerEnvironment: 128,
-          timeoutSeconds: 30,
-          environmentVariables: secretToken ? {
-            BESTOF2_SECRET: secretToken,
-            NODE_ENV: 'production'
-          } : {
-            NODE_ENV: 'production'
-          }
+          maxConcurrencyPerEnvironment: Number.isInteger(maxConcurrency) ? maxConcurrency : 100,
+          timeoutSeconds: Number.isInteger(timeoutSeconds) ? timeoutSeconds : 60,
+          environmentVariables: resolvedEnv
         }
       },
       endpointConfig: {
@@ -555,14 +561,9 @@ async function deployToLambda({
       },
       serviceConfig: {
         executionRoleArn: resolvedRoleArn,
-        maxConcurrencyPerEnvironment: 128,
-        timeoutSeconds: 30,
-        environmentVariables: secretToken ? {
-          BESTOF2_SECRET: secretToken,
-          NODE_ENV: 'production'
-        } : {
-          NODE_ENV: 'production'
-        }
+        maxConcurrencyPerEnvironment: Number.isInteger(maxConcurrency) ? maxConcurrency : 100,
+        timeoutSeconds: Number.isInteger(timeoutSeconds) ? timeoutSeconds : 60,
+        environmentVariables: resolvedEnv
       }
     }));
     const newRevId = revRes.revisionId;

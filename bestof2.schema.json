@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcops.cloud/schemas/bestof2.schema.json",
+  "title": "BestOf2 Project Configuration Schema",
+  "description": "Configuration specification for BestOf2 dual-cloud deployments (Cloudflare Pages + AWS Lambda Web Functions).",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Project deployment name (defaults to package.json name or git repository name).",
+      "pattern": "^[a-z0-9-_]+$"
+    },
+    "limits": {
+      "type": "object",
+      "description": "FinOps quota and rate-limiting controls enforced at Cloudflare Edge Router.",
+      "properties": {
+        "maxMonthlyInvocations": {
+          "type": "integer",
+          "description": "Monthly limit of requests allowed before triggering onLimitExceeded behavior (e.g. 500000 for Free Tier, 2000000 for Pro).",
+          "default": 500000,
+          "minimum": 1000
+        },
+        "onLimitExceeded": {
+          "type": "string",
+          "description": "Action taken when maxMonthlyInvocations is breached. 'stop' returns HTTP 429 at Edge; 'payg' allows continued execution with metered billing.",
+          "enum": ["stop", "payg"],
+          "default": "stop"
+        },
+        "rateLimitPerSec": {
+          "type": "integer",
+          "description": "Max requests per second per IP at Cloudflare Edge before throttling.",
+          "default": 50,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "backend": {
+      "type": "object",
+      "description": "AWS Lambda Web Function compute and runtime specifications.",
+      "properties": {
+        "memoryMB": {
+          "type": "integer",
+          "description": "Active RAM allocated to Lambda instance (in MB).",
+          "default": 256,
+          "enum": [128, 256, 512, 1024, 2048]
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "description": "Execution timeout per HTTP request in seconds.",
+          "default": 60,
+          "minimum": 1,
+          "maximum": 300
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "description": "Maximum concurrent requests per warm container instance (AWS Lambda Web Function limit up to 128).",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 128
+        },
+        "maxConcurrentInstances": {
+          "type": "integer",
+          "description": "Maximum number of simultaneous active instances to avoid runaway AWS billing.",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "env": {
+          "type": "object",
+          "description": "Key-value environment variables injected into the Lambda backend.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "domains": {
+      "type": "object",
+      "description": "Custom domains and DNS routing configuration.",
+      "properties": {
+        "custom": {
+          "type": "string",
+          "description": "Custom domain attached to Cloudflare Pages (e.g., app.example.com)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

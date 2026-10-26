@@ -26,6 +26,30 @@ const { generateEdgeWorker } = require('../router-generator');
 const { deployToLambda } = require('../deployers/lambda');
 const { deployToWrangler } = require('../deployers/wrangler');
 
+const DEFAULT_CONFIG = {
+  name: '',
+  limits: { maxMonthlyInvocations: 500000, onLimitExceeded: 'stop', rateLimitPerSec: 50 },
+  backend: { memoryMB: 256, timeoutSeconds: 60, maxConcurrency: 100, maxConcurrentInstances: 10, env: {} },
+  domains: { custom: '' }
+};
+
+function loadConfig(projectDir) {
+  const configFile = path.join(projectDir, 'bestof2.json');
+  if (fs.existsSync(configFile)) {
+    try {
+      const userConfig = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      return {
+        ...DEFAULT_CONFIG,
+        ...userConfig,
+        limits: { ...DEFAULT_CONFIG.limits, ...(userConfig.limits || {}) },
+        backend: { ...DEFAULT_CONFIG.backend, ...(userConfig.backend || {}) },
+        domains: { ...DEFAULT_CONFIG.domains, ...(userConfig.domains || {}) }
+      };
+    } catch (e) {}
+  }
+  return DEFAULT_CONFIG;
+}
+
 /**
  * Universal Dual-Cloud Deployer
  * Frontends -> Cloudflare Pages CDN ($0 egress bandwidth)
@@ -37,14 +61,17 @@ async function deploy(options = {}) {
   console.log(`------------------------------------------------------------`);
   console.log(`📂 Project: ${projectDir}`);
 
-  // 1. Detect Framework & Architecture Tier
+  // 1. Load bestof2.json configuration (or fallback to embedded defaults)
+  const config = loadConfig(projectDir);
+
+  // 2. Detect Framework & Architecture Tier
   const frameworkInfo = detectFramework(projectDir);
   console.log(`✔ Framework detected: ${frameworkInfo.name}`);
 
-  // 2. Build Project if Needed
+  // 3. Build Project if Needed
   ensureBuilt(frameworkInfo, projectDir);
 
-  const projectName = options.projectName || process.env.PROJECT_NAME || frameworkInfo.projectName || 'bestof2-app';
+  const projectName = options.projectName || process.env.PROJECT_NAME || config.name || frameworkInfo.projectName || 'bestof2-app';
   const isLocal = options.local !== undefined ? options.local : !!process.env.BESTOF2_LOCAL;
   const hasAws = hasAwsConfig(options);
   const secretToken = getSecretToken(projectDir);
@@ -69,7 +96,8 @@ async function deploy(options = {}) {
     printSummary({
       mode: 'Cloudflare Pages (Frontend CDN Only)',
       framework: frameworkInfo.name,
-      url: frontendResult.url
+      url: frontendResult.url,
+      limits: config.limits
     });
 
     return { url: frontendResult.url, mode: 'frontend-only', framework: frameworkInfo.name };
@@ -85,7 +113,11 @@ async function deploy(options = {}) {
       secretToken: frameworkInfo.category === 'backend-only' ? null : secretToken,
       imageUri: options.imageUri,
       endpointUrl: options.endpointUrl || process.env.AWS_ENDPOINT_URL,
-      roleArn: options.roleArn || process.env.AWS_ROLE_ARN
+      roleArn: options.roleArn || process.env.AWS_ROLE_ARN,
+      timeoutSeconds: config.backend.timeoutSeconds,
+      maxConcurrency: config.backend.maxConcurrency,
+      memoryMB: config.backend.memoryMB,
+      envVars: config.backend.env
     });
   } else if (frameworkInfo.category === 'backend-only') {
     console.log(`\n⚠ AWS credentials not found: skipping standalone backend deployment.`);
@@ -97,7 +129,8 @@ async function deploy(options = {}) {
     printSummary({
       mode: 'AWS Lambda Web Function Only',
       framework: frameworkInfo.name,
-      backendUrl
+      backendUrl,
+      limits: config.limits
     });
 
     return { backendUrl, mode: 'backend-only', framework: frameworkInfo.name };
@@ -113,7 +146,10 @@ async function deploy(options = {}) {
     backendUrl,
     dynamicPatterns: routeData.dynamicPatterns,
     secretToken,
-    framework: frameworkInfo.name
+    framework: frameworkInfo.name,
+    limits: config.limits,
+    telemetry: config.telemetry,
+    projectName
   });
 
   frontendResult = deployToWrangler({
@@ -133,7 +169,8 @@ async function deploy(options = {}) {
     url: frontendResult.url,
     backendUrl,
     secretToken,
-    hasAws
+    hasAws,
+    limits: config.limits
   });
 
   return {
@@ -229,7 +266,7 @@ function scanAndWarnHardcodedUrls(targetDir) {
   } catch {}
 }
 
-function printSummary({ mode, framework, url, backendUrl, secretToken, hasAws }) {
+function printSummary({ mode, framework, url, backendUrl, secretToken, hasAws, limits }) {
   console.log(`------------------------------------------------------------`);
   console.log(`🎉 Deployment Complete!`);
   if (url) console.log(`🌐 Production URL:    ${url}`);
@@ -239,8 +276,11 @@ function printSummary({ mode, framework, url, backendUrl, secretToken, hasAws })
   if (secretToken) {
     console.log(`🛡️ Secret Handshake:  ${secretToken.slice(0, 6)}...${secretToken.slice(-6)} (256-bit Crypto Hex)`);
   }
+  if (limits) {
+    console.log(`📊 FinOps Quota:      ${limits.maxMonthlyInvocations.toLocaleString()} reqs/mo (${limits.onLimitExceeded.toUpperCase()} mode)`);
+  }
   console.log(`⚡ Mode:              ${mode} (${framework})`);
   console.log(`------------------------------------------------------------\n`);
 }
 
-module.exports = { deploy };
+module.exports = { deploy, loadConfig, DEFAULT_CONFIG };

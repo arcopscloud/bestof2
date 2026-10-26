@@ -3,9 +3,21 @@ const path = require('path');
 
 /**
  * Generates the Cloudflare Pages Edge Router (_worker.js) dynamically
- * with the detected server routes and secret token handshake.
+ * with detected server routes and secret token handshake.
+ *
+ * @param {object} options
+ * @param {string} options.backendUrl - Target AWS Lambda Web Function URL
+ * @param {string[]} options.dynamicPatterns - Array of regex string patterns for server routes
+ * @param {string} options.secretToken - Handshake secret token for backend authentication
+ * @param {string} [options.framework='fullstack'] - Detected framework name
+ * @returns {string} Clean, lightweight _worker.js code string
  */
-function generateEdgeWorker({ backendUrl, dynamicPatterns, secretToken, framework = 'fullstack' }) {
+function generateEdgeWorker({
+  backendUrl = '',
+  dynamicPatterns = [],
+  secretToken = '',
+  framework = 'fullstack'
+} = {}) {
   const patternsJson = JSON.stringify(dynamicPatterns || []);
 
   const workerCode = `// Auto-generated BestOf2 Cloudflare Pages Edge Router (_worker.js)
@@ -18,7 +30,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Rule 1: Always route mutations (POST, PUT, DELETE, PATCH) or Server Action headers to Backend
+    // Rule 1: Mutations (POST, PUT, DELETE, PATCH) or Server Action headers -> Proxy directly to Backend
     const isMutation = request.method !== "GET" && request.method !== "HEAD";
     const isServerAction = request.headers.has("next-action") || request.headers.has("x-tanstack-start-server-fn");
     const isExplicitServerRoute = DYNAMIC_PATTERNS.some(regex => regex.test(url.pathname));
@@ -28,9 +40,11 @@ export default {
     }
 
     // Rule 2: Static Asset Probe - Served directly from Cloudflare Pages 330+ Edge Locations ($0 bandwidth)
-    const asset = await env.ASSETS.fetch(request);
-    if (asset.status < 400) {
-      return asset;
+    if (env.ASSETS) {
+      const asset = await env.ASSETS.fetch(request);
+      if (asset.status < 400) {
+        return asset;
+      }
     }
 
     // Rule 3: Dynamic SSR / Uncached Fallback -> Proxy to Backend
@@ -53,7 +67,7 @@ async function proxyToBackend(request, url, env) {
   const targetUrl = new URL(url.pathname + url.search, backendBase);
 
   const headers = new Headers(request.headers);
-  headers.delete("host"); // Allow standard fetch to set Host header to targetUrl host
+  headers.delete("host");
   headers.set("x-forwarded-host", url.host);
   headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
 
